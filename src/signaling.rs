@@ -79,6 +79,13 @@ pub enum ServerMessage {
         device_name: String,
     },
 
+    /// A new message is available in the server relay inbox.
+    NewMessage {
+        message_id: Uuid,
+        sender: String,
+        size_bytes: i64,
+    },
+
     /// Heartbeat response.
     Pong,
 
