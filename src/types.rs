@@ -118,6 +118,117 @@ pub struct InboxMetaFile {
     pub timestamp: DateTime<Utc>,
 }
 
+// ── Chunked blob wire format ───────────────────────────────────────
+
+/// Magic bytes for the blob prologue.
+pub const BLOB_MAGIC: &[u8; 4] = b"ST01";
+/// Magic bytes for the blob trailer.
+pub const TRAILER_MAGIC: &[u8; 4] = b"STTR";
+/// Prologue size in bytes.
+pub const BLOB_PROLOGUE_SIZE: usize = 40;
+/// Trailer size in bytes (4 magic + 4 total_chunks + 8 plaintext_size + 32 hash).
+pub const BLOB_TRAILER_SIZE: usize = 48;
+
+/// Fixed-size binary prologue for a chunked encrypted blob.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlobPrologue {
+    pub version: u8,
+    pub algorithm_id: u8,
+    pub chunk_plaintext_size: u32,
+    pub known_plaintext_size: u64,
+}
+
+impl BlobPrologue {
+    pub fn to_bytes(&self) -> [u8; BLOB_PROLOGUE_SIZE] {
+        let mut buf = [0u8; BLOB_PROLOGUE_SIZE];
+        buf[0..4].copy_from_slice(BLOB_MAGIC);
+        buf[4] = self.version;
+        buf[5] = self.algorithm_id;
+        // bytes 6..8 reserved
+        buf[8..12].copy_from_slice(&self.chunk_plaintext_size.to_be_bytes());
+        // bytes 12..16 reserved
+        buf[16..24].copy_from_slice(&self.known_plaintext_size.to_be_bytes());
+        // bytes 24..40 reserved
+        buf
+    }
+
+    pub fn from_bytes(buf: &[u8; BLOB_PROLOGUE_SIZE]) -> Result<Self, &'static str> {
+        if &buf[0..4] != BLOB_MAGIC {
+            return Err("Invalid blob magic");
+        }
+        let version = buf[4];
+        if version != 1 {
+            return Err("Unsupported blob version");
+        }
+        let algorithm_id = buf[5];
+        if algorithm_id != 1 {
+            return Err("Unsupported algorithm");
+        }
+        let chunk_plaintext_size = u32::from_be_bytes(buf[8..12].try_into().unwrap());
+        let known_plaintext_size = u64::from_be_bytes(buf[16..24].try_into().unwrap());
+
+        Ok(Self {
+            version,
+            algorithm_id,
+            chunk_plaintext_size,
+            known_plaintext_size,
+        })
+    }
+}
+
+/// Fixed-size binary trailer appended after all chunk frames.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlobTrailer {
+    pub total_chunks: u32,
+    pub total_plaintext_size: u64,
+    pub file_hash: [u8; 32],
+}
+
+impl BlobTrailer {
+    pub fn to_bytes(&self) -> [u8; BLOB_TRAILER_SIZE] {
+        let mut buf = [0u8; BLOB_TRAILER_SIZE];
+        buf[0..4].copy_from_slice(TRAILER_MAGIC);
+        buf[4..8].copy_from_slice(&self.total_chunks.to_be_bytes());
+        buf[8..16].copy_from_slice(&self.total_plaintext_size.to_be_bytes());
+        buf[16..48].copy_from_slice(&self.file_hash);
+        buf
+    }
+
+    /// Parse from a full 48-byte buffer.
+    pub fn from_bytes(buf: &[u8; BLOB_TRAILER_SIZE]) -> Result<Self, &'static str> {
+        if &buf[0..4] != TRAILER_MAGIC {
+            return Err("Invalid trailer magic");
+        }
+        let total_chunks = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+        let total_plaintext_size = u64::from_be_bytes(buf[8..16].try_into().unwrap());
+        let mut file_hash = [0u8; 32];
+        file_hash.copy_from_slice(&buf[16..48]);
+
+        Ok(Self {
+            total_chunks,
+            total_plaintext_size,
+            file_hash,
+        })
+    }
+
+    /// Parse when the first 4 bytes (trailer magic) have already been read.
+    pub fn from_remaining(magic: &[u8; 4], rest: &[u8; 44]) -> Result<Self, &'static str> {
+        if magic != TRAILER_MAGIC {
+            return Err("Invalid trailer magic");
+        }
+        let total_chunks = u32::from_be_bytes(rest[0..4].try_into().unwrap());
+        let total_plaintext_size = u64::from_be_bytes(rest[4..12].try_into().unwrap());
+        let mut file_hash = [0u8; 32];
+        file_hash.copy_from_slice(&rest[12..44]);
+
+        Ok(Self {
+            total_chunks,
+            total_plaintext_size,
+            file_hash,
+        })
+    }
+}
+
 mod hex_bytes {
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -178,6 +289,54 @@ mod tests {
         assert_eq!(MessageStatus::Queued.to_string(), "queued");
         assert_eq!(MessageStatus::Delivered.to_string(), "delivered");
         assert_eq!(MessageStatus::Expired.to_string(), "expired");
+    }
+
+    #[test]
+    fn test_blob_prologue_roundtrip() {
+        let prologue = BlobPrologue {
+            version: 1,
+            algorithm_id: 1,
+            chunk_plaintext_size: 262144,
+            known_plaintext_size: 1_000_000,
+        };
+        let bytes = prologue.to_bytes();
+        assert_eq!(&bytes[0..4], BLOB_MAGIC);
+        let parsed = BlobPrologue::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed, prologue);
+    }
+
+    #[test]
+    fn test_blob_prologue_bad_magic() {
+        let mut bytes = [0u8; BLOB_PROLOGUE_SIZE];
+        bytes[0..4].copy_from_slice(b"XXXX");
+        assert!(BlobPrologue::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_blob_trailer_roundtrip() {
+        let trailer = BlobTrailer {
+            total_chunks: 42,
+            total_plaintext_size: 11_000_000,
+            file_hash: [0xAB; 32],
+        };
+        let bytes = trailer.to_bytes();
+        assert_eq!(&bytes[0..4], TRAILER_MAGIC);
+        let parsed = BlobTrailer::from_bytes(&bytes).unwrap();
+        assert_eq!(parsed, trailer);
+    }
+
+    #[test]
+    fn test_blob_trailer_from_remaining() {
+        let trailer = BlobTrailer {
+            total_chunks: 7,
+            total_plaintext_size: 1_800_000,
+            file_hash: [0xCD; 32],
+        };
+        let bytes = trailer.to_bytes();
+        let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+        let rest: [u8; 44] = bytes[4..48].try_into().unwrap();
+        let parsed = BlobTrailer::from_remaining(&magic, &rest).unwrap();
+        assert_eq!(parsed, trailer);
     }
 
     #[test]
