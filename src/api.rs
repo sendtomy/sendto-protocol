@@ -85,6 +85,41 @@ pub struct RegisterDeviceRequest {
     pub public_key: String,
     #[serde(default)]
     pub device_type: DeviceType,
+    /// Optional APNS or FCM push token for mobile devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_token: Option<String>,
+    /// Platform the push token belongs to ("ios" or "android").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_platform: Option<PushPlatform>,
+}
+
+/// Push notification platform for mobile devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PushPlatform {
+    /// Apple Push Notification service (iOS).
+    Ios,
+    /// Firebase Cloud Messaging (Android).
+    Android,
+}
+
+impl PushPlatform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PushPlatform::Ios => "ios",
+            PushPlatform::Android => "android",
+        }
+    }
+}
+
+/// Request body for `PATCH /devices/:id/push-token`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatePushTokenRequest {
+    /// The new push token, or `None` to clear it (e.g. on logout).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push_platform: Option<PushPlatform>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
