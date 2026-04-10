@@ -214,12 +214,31 @@ impl fmt::Display for ActivityKind {
     }
 }
 
+/// Structured metadata for a file-related activity event (MessageReceived,
+/// MessageSent, AgentMessageReceived). Optional — events that don't involve a
+/// file leave this as None.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileActivity {
+    pub message_id: Uuid,
+    pub filename: String,
+    pub mime: String,
+    pub size: u64,
+    /// Absolute path to the file on disk, if it was persisted locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Device name of the peer involved (sender for receives, recipient for sends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+}
+
 /// A single activity event from the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
     pub timestamp: DateTime<Utc>,
     pub kind: ActivityKind,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<FileActivity>,
 }
 
 impl ActivityEntry {
@@ -228,7 +247,14 @@ impl ActivityEntry {
             timestamp: Utc::now(),
             kind,
             detail: detail.into(),
+            file: None,
         }
+    }
+
+    /// Attach structured file metadata to this activity entry.
+    pub fn with_file(mut self, file: FileActivity) -> Self {
+        self.file = Some(file);
+        self
     }
 }
 
