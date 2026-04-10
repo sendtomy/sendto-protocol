@@ -185,6 +185,11 @@ pub enum ActivityKind {
     Error,
     PollSuccess,
     PollFailed,
+    PeerOnline,
+    PeerOffline,
+    LoggedIn,
+    LoggedOut,
+    Registered,
 }
 
 impl fmt::Display for ActivityKind {
@@ -200,6 +205,11 @@ impl fmt::Display for ActivityKind {
             ActivityKind::Error => write!(f, "ERROR"),
             ActivityKind::PollSuccess => write!(f, "POLL_OK"),
             ActivityKind::PollFailed => write!(f, "POLL_FAIL"),
+            ActivityKind::PeerOnline => write!(f, "PEER_ON"),
+            ActivityKind::PeerOffline => write!(f, "PEER_OFF"),
+            ActivityKind::LoggedIn => write!(f, "LOGIN"),
+            ActivityKind::LoggedOut => write!(f, "LOGOUT"),
+            ActivityKind::Registered => write!(f, "REGISTER"),
         }
     }
 }
