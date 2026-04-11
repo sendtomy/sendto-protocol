@@ -129,6 +129,28 @@ pub struct DeviceInfo {
     #[serde(default)]
     pub device_type: DeviceType,
     pub created_at: DateTime<Utc>,
+    /// `true` if the server believes the device can receive a message right
+    /// now — either it has an active WebSocket connection, or it has a push
+    /// token registered and has checked in recently enough that a push will
+    /// likely wake it. Older clients that don't know this field default to
+    /// `false` on deserialization.
+    #[serde(default)]
+    pub reachable: bool,
+    /// Last time an authenticated request arrived from this device (via a
+    /// device-scoped token). `None` for devices that have never used a
+    /// device-scoped token, or for very old rows predating migration 006.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+/// Response for `POST /devices`. Returns the newly-created device plus a
+/// freshly-minted device-scoped JWT that the client should use for all
+/// subsequent calls — it carries the device_id in its claims so the server
+/// can update `last_seen_at` and answer reachability queries correctly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterDeviceResponse {
+    pub device: DeviceInfo,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
