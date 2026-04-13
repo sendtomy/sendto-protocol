@@ -136,6 +136,12 @@ pub struct DeviceInfo {
     /// `false` on deserialization.
     #[serde(default)]
     pub reachable: bool,
+    /// `true` if the device is currently **online** (active WebSocket
+    /// connection or heartbeat within the last ~60s). Use this for presence
+    /// UI (the green dot); use `reachable` for "is it worth trying to send
+    /// to this device at all".
+    #[serde(default)]
+    pub online: bool,
     /// Last time an authenticated request arrived from this device (via a
     /// device-scoped token). `None` for devices that have never used a
     /// device-scoped token, or for very old rows predating migration 006.
