@@ -345,9 +345,18 @@ mod tests {
         assert_eq!(AgentMode::OnDemand.to_string(), "on-demand");
         assert_eq!(AgentMode::Persistent.to_string(), "persistent");
 
-        assert_eq!("on-demand".parse::<AgentMode>().unwrap(), AgentMode::OnDemand);
-        assert_eq!("ondemand".parse::<AgentMode>().unwrap(), AgentMode::OnDemand);
-        assert_eq!("persistent".parse::<AgentMode>().unwrap(), AgentMode::Persistent);
+        assert_eq!(
+            "on-demand".parse::<AgentMode>().unwrap(),
+            AgentMode::OnDemand
+        );
+        assert_eq!(
+            "ondemand".parse::<AgentMode>().unwrap(),
+            AgentMode::OnDemand
+        );
+        assert_eq!(
+            "persistent".parse::<AgentMode>().unwrap(),
+            AgentMode::Persistent
+        );
         assert!("invalid".parse::<AgentMode>().is_err());
     }
 

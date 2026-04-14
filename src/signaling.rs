@@ -12,22 +12,13 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     /// Authenticate this WebSocket connection.
-    Authenticate {
-        token: String,
-        device_id: Uuid,
-    },
+    Authenticate { token: String, device_id: Uuid },
 
     /// Forward an SDP offer to a target device.
-    SdpOffer {
-        target_device: String,
-        sdp: String,
-    },
+    SdpOffer { target_device: String, sdp: String },
 
     /// Forward an SDP answer back to the offering device.
-    SdpAnswer {
-        target_device: String,
-        sdp: String,
-    },
+    SdpAnswer { target_device: String, sdp: String },
 
     /// Forward an ICE candidate to a target device.
     IceCandidate {
@@ -52,16 +43,10 @@ pub enum ServerMessage {
     },
 
     /// An SDP offer from another device.
-    SdpOffer {
-        from_device: String,
-        sdp: String,
-    },
+    SdpOffer { from_device: String, sdp: String },
 
     /// An SDP answer from another device.
-    SdpAnswer {
-        from_device: String,
-        sdp: String,
-    },
+    SdpAnswer { from_device: String, sdp: String },
 
     /// An ICE candidate from another device.
     IceCandidate {
@@ -70,14 +55,10 @@ pub enum ServerMessage {
     },
 
     /// Another device on this account came online.
-    PeerOnline {
-        device_name: String,
-    },
+    PeerOnline { device_name: String },
 
     /// Another device on this account went offline.
-    PeerOffline {
-        device_name: String,
-    },
+    PeerOffline { device_name: String },
 
     /// A new message is available in the server relay inbox.
     NewMessage {
@@ -90,10 +71,7 @@ pub enum ServerMessage {
     Pong,
 
     /// Error from the server.
-    Error {
-        code: String,
-        message: String,
-    },
+    Error { code: String, message: String },
 }
 
 /// Metadata sent as the first message on a WebRTC data channel
@@ -214,7 +192,10 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ClientMessage::IceCandidate { target_device, candidate } => {
+            ClientMessage::IceCandidate {
+                target_device,
+                candidate,
+            } => {
                 assert_eq!(target_device, "phone");
                 assert_eq!(candidate, "candidate:1 ...");
             }
@@ -242,7 +223,11 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ServerMessage::Authenticated { device_name, email, online_peers } => {
+            ServerMessage::Authenticated {
+                device_name,
+                email,
+                online_peers,
+            } => {
                 assert_eq!(device_name, "my-pc");
                 assert_eq!(email, "user@example.com");
                 assert_eq!(online_peers, vec!["laptop", "phone"]);
@@ -294,7 +279,10 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ServerMessage::IceCandidate { from_device, candidate } => {
+            ServerMessage::IceCandidate {
+                from_device,
+                candidate,
+            } => {
                 assert_eq!(from_device, "phone");
                 assert_eq!(candidate, "candidate:2 ...");
             }
@@ -304,7 +292,9 @@ mod tests {
 
     #[test]
     fn server_message_peer_online_roundtrip() {
-        let msg = ServerMessage::PeerOnline { device_name: "tablet".into() };
+        let msg = ServerMessage::PeerOnline {
+            device_name: "tablet".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         match parsed {
@@ -315,7 +305,9 @@ mod tests {
 
     #[test]
     fn server_message_peer_offline_roundtrip() {
-        let msg = ServerMessage::PeerOffline { device_name: "tablet".into() };
+        let msg = ServerMessage::PeerOffline {
+            device_name: "tablet".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         match parsed {
