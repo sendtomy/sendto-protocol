@@ -177,7 +177,7 @@ fn derive_transfer_key(
     recipient_pk: &PublicKey,
     transfer_nonce: &[u8; TRANSFER_NONCE_SIZE],
 ) -> [u8; 32] {
-    use x25519_dalek::{EphemeralSecret, PublicKey as X25519Public, StaticSecret};
+    use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
 
     // Perform raw X25519 DH to get shared secret
     let sk_bytes = sender_sk.to_bytes();
@@ -247,7 +247,7 @@ impl StreamEncryptor {
         plaintext: &[u8],
         is_final: bool,
     ) -> Result<Vec<u8>, CryptoError> {
-        use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305, XNonce};
+        use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
 
         let nonce_bytes = chunk_nonce(self.chunk_index, is_final);
         let nonce = XNonce::from_slice(&nonce_bytes);
@@ -301,7 +301,7 @@ impl StreamDecryptor {
 
     /// Decrypt one chunk. Returns `(plaintext, is_final)`.
     pub fn decrypt_chunk(&mut self, ciphertext: &[u8]) -> Result<(Vec<u8>, bool), CryptoError> {
-        use chacha20poly1305::{AeadCore, AeadInPlace, KeyInit, XChaCha20Poly1305, XNonce};
+        use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
 
         let cipher = XChaCha20Poly1305::new(&self.key);
 
