@@ -3,6 +3,7 @@ name = "sendto-protocol"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Wire format, crypto primitives, and API types for SendTo — end-to-end encrypted file and message transfer."
 repository = "https://github.com/sendtomy/sendto-protocol"
 
 [dependencies]

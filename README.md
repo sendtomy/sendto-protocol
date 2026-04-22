@@ -1,66 +1,42 @@
-# SendTo Protocol
+# sendto-protocol
 
-Shared SendTo protocol, API contract, and crypto helpers used by both clients and the hosted service.
+Shared wire format, crypto primitives, and API contract for [SendTo](https://github.com/sendtomy) — end-to-end encrypted file and message transfer.
 
-This crate contains:
+Consumed by:
+- **[sendto-clients](https://github.com/sendtomy/sendto-clients)** — CLI, daemon, desktop Tauri app, mobile Tauri app, system tray.
+- **[sendto-service](https://github.com/sendtomy/sendto-service)** — Axum relay + coordination server.
 
-- API request/response types (`api`)
-- Daemon IPC types (`daemon`) — contract between `sendto` CLI and `sendtod` daemon
-- Shared domain types (`types`)
-- Crypto helpers (`crypto`)
+## What's in this crate
 
-## Architecture
+| Module    | Contents                                                                 |
+|-----------|--------------------------------------------------------------------------|
+| `api`     | REST request/response types (auth, devices, messages, inbox, sessions)   |
+| `types`   | Domain enums, blob envelope format, device-name validation               |
+| `crypto`  | X25519 + XChaCha20-Poly1305 with per-transfer BLAKE3 KDF                 |
+| `daemon`  | IPC types for the `sendto` CLI ↔ daemon local socket                     |
 
-```
-┌──────────────────────────────────────────────────┐
-│                   sendtod (daemon)                │
-│                                                   │
-│  • Runs as systemd service / launchd / Windows    │
-│    service                                        │
-│  • Holds the device keypair                       │
-│  • Polls the server for incoming messages         │
-│  • Listens on a local socket for CLI/tray comms   │
-│  • Manages agent registrations                    │
-└────────────┬──────────────────────┬───────────────┘
-             │ Unix socket /        │ HTTPS
-             │ named pipe           │
-     ┌───────┴───────┐      ┌──────┴──────┐
-     │  CLI / Tray   │      │  SendTo     │
-     │  (clients)    │      │  Server     │
-     └───────────────┘      └─────────────┘
-```
+## Crypto primitives
 
-### Packages
+- **Key agreement:** X25519 (`x25519-dalek`).
+- **Authenticated encryption:** XChaCha20-Poly1305 (`chacha20poly1305`).
+- **Per-transfer KDF:** BLAKE3 derive-key with context `sendto.v1.transfer`, domain-separated.
+- **Blob envelope:** 40-byte prologue (`"ST01"` magic + version + algorithm ID + chunk size) + chunks + 48-byte trailer (`"STTR"` + chunk count + plaintext size + BLAKE3 hash).
 
-| Package        | Description                                        |
-|----------------|----------------------------------------------------|
-| `sendto`       | CLI + daemon (`sendtod`). Core install.             |
-| `sendto-tray`  | Optional GUI tray app. Depends on `sendto`.         |
-
-### CLI commands (talks to daemon via socket)
-
-```sh
-sendto up                    # authenticate + bring online
-sendto down                  # go offline
-sendto status                # show connection state, device, inbox count
-sendto send <target> <file>  # send file to device or agent
-sendto inbox                 # list pending messages
-sendto receive <message_id>  # download a message
-sendto devices               # list devices on your account
-sendto register <name>       # register this machine
-sendto agent add <name>      # register an agent under this device
-sendto agent rm <name>       # remove an agent
-```
-
-### Daemon socket
-
-- **Linux/macOS**: `$XDG_RUNTIME_DIR/sendto/sendtod.sock` or `~/.sendto/sendtod.sock`
-- **Windows**: `\\.\pipe\sendto-daemon`
-
-Both CLI and tray are thin clients — all state lives in the daemon.
+See `src/crypto.rs` and `src/types.rs` for details.
 
 ## Development
 
 ```sh
-cargo test
+cargo test      # 13 crypto roundtrip tests + 7 type tests
+cargo clippy -- -D warnings
 ```
+
+## Stability
+
+- Wire format is versioned (byte 4 of the blob prologue). Additive changes only; new algorithms require a version bump.
+- Crypto context strings are fixed. Never reuse across purposes.
+- This crate is **pre-1.0**; minor versions may break API types until `1.0`.
+
+## License
+
+MIT.
