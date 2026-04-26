@@ -4,8 +4,8 @@
 //! public-key encryption. This is compatible across Rust, JavaScript, and Python.
 
 use crypto_box::{
-    Nonce, PublicKey, SalsaBox, SecretKey,
     aead::{Aead, AeadCore, OsRng},
+    Nonce, PublicKey, SalsaBox, SecretKey,
 };
 use thiserror::Error;
 
