@@ -23,8 +23,8 @@ cargo clippy -- -D warnings
 
 ## Conventions
 
-- **Do not break the wire.** The blob envelope (`"ST01"` magic + version byte + chunks + `"STTR"` trailer) is versioned. Additive changes only; new algorithms require a protocol version bump.
-- Crypto context strings are domain-separated (`sendto.v1.transfer`). Never reuse across purposes.
+- **Do not break the wire.** The blob envelope (`"ST02"` magic + version byte + chunks + `"STTR"` trailer) is versioned. Additive changes only; new algorithms require a protocol version bump.
+- Crypto context strings are domain-separated (`sendto.v2.transfer`). Never reuse across purposes.
 - All public types are `Serialize + Deserialize` and JSON-compatible.
 - `thiserror` for error types. No `anyhow` in library code.
 - Public API of this crate is not yet `1.0`; minor versions may break types.

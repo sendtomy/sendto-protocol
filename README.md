@@ -19,8 +19,8 @@ Consumed by:
 
 - **Key agreement:** X25519 (`x25519-dalek`).
 - **Authenticated encryption:** XChaCha20-Poly1305 (`chacha20poly1305`).
-- **Per-transfer KDF:** BLAKE3 derive-key with context `sendto.v1.transfer`, domain-separated.
-- **Blob envelope:** 40-byte prologue (`"ST01"` magic + version + algorithm ID + chunk size) + chunks + 48-byte trailer (`"STTR"` + chunk count + plaintext size + BLAKE3 hash).
+- **Per-transfer KDF:** BLAKE3 derive-key with context `sendto.v2.transfer`, domain-separated.
+- **Blob envelope:** 40-byte prologue (`"ST02"` magic + version 2 + algorithm ID 2 + chunk size) + sender ephemeral public key + transfer nonce + chunks + 48-byte trailer (`"STTR"` + chunk count + plaintext size + BLAKE3 hash).
 
 See `src/crypto.rs` and `src/types.rs` for details.
 

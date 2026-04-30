@@ -121,7 +121,9 @@ pub struct InboxMetaFile {
 // ── Chunked blob wire format ───────────────────────────────────────
 
 /// Magic bytes for the blob prologue.
-pub const BLOB_MAGIC: &[u8; 4] = b"ST01";
+pub const BLOB_MAGIC: &[u8; 4] = b"ST02";
+pub const BLOB_VERSION: u8 = 2;
+pub const BLOB_ALGORITHM_ID: u8 = 2;
 /// Magic bytes for the blob trailer.
 pub const TRAILER_MAGIC: &[u8; 4] = b"STTR";
 /// Prologue size in bytes.
@@ -157,11 +159,11 @@ impl BlobPrologue {
             return Err("Invalid blob magic");
         }
         let version = buf[4];
-        if version != 1 {
+        if version != BLOB_VERSION {
             return Err("Unsupported blob version");
         }
         let algorithm_id = buf[5];
-        if algorithm_id != 1 {
+        if algorithm_id != BLOB_ALGORITHM_ID {
             return Err("Unsupported algorithm");
         }
         let chunk_plaintext_size = u32::from_be_bytes(buf[8..12].try_into().unwrap());
@@ -294,8 +296,8 @@ mod tests {
     #[test]
     fn test_blob_prologue_roundtrip() {
         let prologue = BlobPrologue {
-            version: 1,
-            algorithm_id: 1,
+            version: BLOB_VERSION,
+            algorithm_id: BLOB_ALGORITHM_ID,
             chunk_plaintext_size: 262144,
             known_plaintext_size: 1_000_000,
         };
@@ -309,6 +311,42 @@ mod tests {
     fn test_blob_prologue_bad_magic() {
         let mut bytes = [0u8; BLOB_PROLOGUE_SIZE];
         bytes[0..4].copy_from_slice(b"XXXX");
+        assert!(BlobPrologue::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_blob_prologue_rejects_v1_magic() {
+        let mut bytes = BlobPrologue {
+            version: BLOB_VERSION,
+            algorithm_id: BLOB_ALGORITHM_ID,
+            chunk_plaintext_size: 262144,
+            known_plaintext_size: 1_000_000,
+        }
+        .to_bytes();
+        bytes[0..4].copy_from_slice(b"ST01");
+        assert!(BlobPrologue::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn test_blob_prologue_rejects_old_version_and_algorithm() {
+        let mut bytes = BlobPrologue {
+            version: BLOB_VERSION,
+            algorithm_id: BLOB_ALGORITHM_ID,
+            chunk_plaintext_size: 262144,
+            known_plaintext_size: 1_000_000,
+        }
+        .to_bytes();
+        bytes[4] = 1;
+        assert!(BlobPrologue::from_bytes(&bytes).is_err());
+
+        let mut bytes = BlobPrologue {
+            version: BLOB_VERSION,
+            algorithm_id: BLOB_ALGORITHM_ID,
+            chunk_plaintext_size: 262144,
+            known_plaintext_size: 1_000_000,
+        }
+        .to_bytes();
+        bytes[5] = 1;
         assert!(BlobPrologue::from_bytes(&bytes).is_err());
     }
 

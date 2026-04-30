@@ -1,7 +1,8 @@
 //! Cryptographic operations for SendTo.
 //!
-//! Uses NaCl crypto_box (X25519 + XSalsa20-Poly1305) for authenticated
-//! public-key encryption. This is compatible across Rust, JavaScript, and Python.
+//! Uses NaCl crypto_box for legacy/direct public-key encryption and a v2
+//! chunked XChaCha20-Poly1305 relay blob format with X25519 + BLAKE3 key
+//! derivation.
 
 use crypto_box::{
     aead::{Aead, AeadCore, OsRng},
@@ -165,36 +166,55 @@ pub const CHUNK_PLAINTEXT_SIZE: usize = 256 * 1024;
 pub const CHUNK_TAG_SIZE: usize = 16;
 /// Random nonce size for per-transfer key derivation.
 pub const TRANSFER_NONCE_SIZE: usize = 32;
+/// Sender ephemeral public key size in blob v2 bodies.
+pub const SENDER_EPHEMERAL_PUBLIC_KEY_SIZE: usize = 32;
 /// XChaCha20-Poly1305 nonce size.
 const XCHACHA_NONCE_SIZE: usize = 24;
 
-/// Derive a per-transfer symmetric key from X25519 shared secret.
-///
-/// Uses BLAKE3 derive_key with context string and:
-///   shared_secret || sender_pk || recipient_pk || transfer_nonce
-fn derive_transfer_key(
-    sender_sk: &SecretKey,
+fn x25519_shared_secret(sk: &SecretKey, pk: &PublicKey) -> [u8; 32] {
+    use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
+
+    let static_secret = StaticSecret::from(sk.to_bytes());
+    let x_pk = X25519Public::from(*pk.as_bytes());
+    *static_secret.diffie_hellman(&x_pk).as_bytes()
+}
+
+/// Derive a v2 per-transfer symmetric key from sender ephemeral and static DH.
+fn derive_transfer_key_for_sender(
+    sender_static_sk: &SecretKey,
+    sender_ephemeral_sk: &SecretKey,
     recipient_pk: &PublicKey,
     transfer_nonce: &[u8; TRANSFER_NONCE_SIZE],
 ) -> [u8; 32] {
-    use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
+    let sender_static_pk = sender_static_sk.public_key();
+    let sender_ephemeral_pk = sender_ephemeral_sk.public_key();
+    derive_transfer_key_v2(
+        &x25519_shared_secret(sender_ephemeral_sk, recipient_pk),
+        &x25519_shared_secret(sender_static_sk, recipient_pk),
+        &sender_static_pk,
+        &sender_ephemeral_pk,
+        recipient_pk,
+        transfer_nonce,
+    )
+}
 
-    // Perform raw X25519 DH to get shared secret
-    let sk_bytes = sender_sk.to_bytes();
-    let static_secret = StaticSecret::from(sk_bytes);
-    let x_pk = X25519Public::from(*recipient_pk.as_bytes());
-    let shared_secret = static_secret.diffie_hellman(&x_pk);
-
-    let sender_pk = sender_sk.public_key();
-
-    // KDF input: shared_secret || sender_pk || recipient_pk || transfer_nonce
-    let mut kdf_input = Vec::with_capacity(32 + 32 + 32 + TRANSFER_NONCE_SIZE);
-    kdf_input.extend_from_slice(shared_secret.as_bytes());
-    kdf_input.extend_from_slice(sender_pk.as_bytes());
+fn derive_transfer_key_v2(
+    ephemeral_dh: &[u8; 32],
+    static_dh: &[u8; 32],
+    sender_static_pk: &PublicKey,
+    sender_ephemeral_pk: &PublicKey,
+    recipient_pk: &PublicKey,
+    transfer_nonce: &[u8; TRANSFER_NONCE_SIZE],
+) -> [u8; 32] {
+    let mut kdf_input = Vec::with_capacity(32 + 32 + 32 + 32 + 32 + TRANSFER_NONCE_SIZE);
+    kdf_input.extend_from_slice(ephemeral_dh);
+    kdf_input.extend_from_slice(static_dh);
+    kdf_input.extend_from_slice(sender_static_pk.as_bytes());
+    kdf_input.extend_from_slice(sender_ephemeral_pk.as_bytes());
     kdf_input.extend_from_slice(recipient_pk.as_bytes());
     kdf_input.extend_from_slice(transfer_nonce);
 
-    blake3::derive_key("sendto.v1.transfer", &kdf_input)
+    blake3::derive_key("sendto.v2.transfer", &kdf_input)
 }
 
 /// Build a per-chunk nonce: chunk index in bytes 0..8, flags in byte 8, rest zero.
@@ -214,22 +234,32 @@ fn chunk_nonce(index: u64, is_final: bool) -> [u8; XCHACHA_NONCE_SIZE] {
 pub struct StreamEncryptor {
     key: chacha20poly1305::Key,
     transfer_nonce: [u8; TRANSFER_NONCE_SIZE],
+    sender_ephemeral_public_key: PublicKey,
     chunk_index: u64,
 }
 
 impl StreamEncryptor {
     /// Create a new encryptor with a fresh random transfer nonce.
-    pub fn new(sender_sk: &SecretKey, recipient_pk: &PublicKey) -> Self {
+    pub fn new(sender_static_sk: &SecretKey, recipient_pk: &PublicKey) -> Self {
         use rand::RngCore;
         let mut transfer_nonce = [0u8; TRANSFER_NONCE_SIZE];
         OsRng.fill_bytes(&mut transfer_nonce);
 
-        let key_bytes = derive_transfer_key(sender_sk, recipient_pk, &transfer_nonce);
+        let sender_ephemeral_sk = SecretKey::generate(&mut OsRng);
+        let sender_ephemeral_public_key = sender_ephemeral_sk.public_key();
+        let key_bytes = derive_transfer_key_for_sender(
+            sender_static_sk,
+            &sender_ephemeral_sk,
+            recipient_pk,
+            &transfer_nonce,
+        );
         let key = chacha20poly1305::Key::from(key_bytes);
+        drop(sender_ephemeral_sk);
 
         Self {
             key,
             transfer_nonce,
+            sender_ephemeral_public_key,
             chunk_index: 0,
         }
     }
@@ -237,6 +267,10 @@ impl StreamEncryptor {
     /// The random transfer nonce (sent to receiver for key derivation).
     pub fn transfer_nonce(&self) -> &[u8; TRANSFER_NONCE_SIZE] {
         &self.transfer_nonce
+    }
+
+    pub fn sender_ephemeral_public_key(&self) -> &PublicKey {
+        &self.sender_ephemeral_public_key
     }
 
     /// Encrypt one chunk. Set `is_final` to true on the last chunk.
@@ -273,24 +307,16 @@ impl StreamDecryptor {
     /// and the transfer nonce received from the sender.
     pub fn new(
         recipient_sk: &SecretKey,
-        sender_pk: &PublicKey,
+        sender_static_pk: &PublicKey,
+        sender_ephemeral_pk: &PublicKey,
         transfer_nonce: &[u8; TRANSFER_NONCE_SIZE],
     ) -> Self {
-        // The KDF must produce the same key as the encryptor.
-        // The encryptor calls derive_transfer_key(sender_sk, recipient_pk, nonce).
-        // X25519 DH is commutative: sender_sk * recipient_pk == recipient_sk * sender_pk.
-        // But our KDF also includes sender_pk || recipient_pk in the input.
-        // So we must pass the keys in the SAME order as the sender did.
-        //
-        // The sender called: derive_transfer_key(sender_sk, recipient_pk, nonce)
-        //   which internally does: sender_sk DH recipient_pk, then hashes with sender_pk || recipient_pk
-        //
-        // The receiver must reconstruct the same KDF input, so we need
-        // the sender's public key as the "recipient" for DH (gives same shared secret),
-        // but we must reconstruct the same pk ordering in the hash.
-        //
-        // We'll use a separate derivation that takes explicit pks.
-        let key_bytes = derive_transfer_key_for_receiver(recipient_sk, sender_pk, transfer_nonce);
+        let key_bytes = derive_transfer_key_for_receiver(
+            recipient_sk,
+            sender_static_pk,
+            sender_ephemeral_pk,
+            transfer_nonce,
+        );
         let key = chacha20poly1305::Key::from(key_bytes);
 
         Self {
@@ -333,26 +359,19 @@ impl StreamDecryptor {
 /// Since DH is commutative, recipient_sk * sender_pk == sender_sk * recipient_pk.
 fn derive_transfer_key_for_receiver(
     recipient_sk: &SecretKey,
-    sender_pk: &PublicKey,
+    sender_static_pk: &PublicKey,
+    sender_ephemeral_pk: &PublicKey,
     transfer_nonce: &[u8; TRANSFER_NONCE_SIZE],
 ) -> [u8; 32] {
-    use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
-
-    let sk_bytes = recipient_sk.to_bytes();
-    let static_secret = StaticSecret::from(sk_bytes);
-    let x_pk = X25519Public::from(*sender_pk.as_bytes());
-    let shared_secret = static_secret.diffie_hellman(&x_pk);
-
     let recipient_pk = recipient_sk.public_key();
-
-    // MUST match sender's ordering: sender_pk || recipient_pk
-    let mut kdf_input = Vec::with_capacity(32 + 32 + 32 + TRANSFER_NONCE_SIZE);
-    kdf_input.extend_from_slice(shared_secret.as_bytes());
-    kdf_input.extend_from_slice(sender_pk.as_bytes());
-    kdf_input.extend_from_slice(recipient_pk.as_bytes());
-    kdf_input.extend_from_slice(transfer_nonce);
-
-    blake3::derive_key("sendto.v1.transfer", &kdf_input)
+    derive_transfer_key_v2(
+        &x25519_shared_secret(recipient_sk, sender_ephemeral_pk),
+        &x25519_shared_secret(recipient_sk, sender_static_pk),
+        sender_static_pk,
+        sender_ephemeral_pk,
+        &recipient_pk,
+        transfer_nonce,
+    )
 }
 
 pub fn hex_decode(s: &str) -> Result<Vec<u8>, CryptoError> {
@@ -507,11 +526,16 @@ mod tests {
         let plaintext = b"Hello, streaming world!";
         let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
         let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
 
         let ciphertext = encryptor.encrypt_chunk(plaintext, true).unwrap();
 
-        let mut decryptor =
-            StreamDecryptor::new(&recipient.secret_key, &sender.public_key, &transfer_nonce);
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
 
         let (decrypted, is_final) = decryptor.decrypt_chunk(&ciphertext).unwrap();
         assert_eq!(decrypted, plaintext);
@@ -530,6 +554,7 @@ mod tests {
 
         let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
         let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
 
         // Encrypt in chunks
         let mut ciphertexts = Vec::new();
@@ -546,8 +571,12 @@ mod tests {
         assert_eq!(ciphertexts.len(), 4); // 3 full chunks + 1 partial
 
         // Decrypt
-        let mut decryptor =
-            StreamDecryptor::new(&recipient.secret_key, &sender.public_key, &transfer_nonce);
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
 
         let mut decrypted = Vec::new();
         let mut saw_final = false;
@@ -570,12 +599,17 @@ mod tests {
 
         let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
         let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
 
         let ciphertext = encryptor.encrypt_chunk(b"", true).unwrap();
         assert_eq!(ciphertext.len(), CHUNK_TAG_SIZE); // just the tag
 
-        let mut decryptor =
-            StreamDecryptor::new(&recipient.secret_key, &sender.public_key, &transfer_nonce);
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
 
         let (decrypted, is_final) = decryptor.decrypt_chunk(&ciphertext).unwrap();
         assert!(decrypted.is_empty());
@@ -590,10 +624,56 @@ mod tests {
 
         let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
         let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
         let ciphertext = encryptor.encrypt_chunk(b"secret", true).unwrap();
 
-        let mut decryptor =
-            StreamDecryptor::new(&wrong.secret_key, &sender.public_key, &transfer_nonce);
+        let mut decryptor = StreamDecryptor::new(
+            &wrong.secret_key,
+            &sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
+
+        assert!(decryptor.decrypt_chunk(&ciphertext).is_err());
+    }
+
+    #[test]
+    fn test_stream_wrong_sender_static_key_fails() {
+        let sender = KeyPair::generate();
+        let recipient = KeyPair::generate();
+        let wrong_sender = KeyPair::generate();
+
+        let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
+        let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
+        let ciphertext = encryptor.encrypt_chunk(b"secret", true).unwrap();
+
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &wrong_sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
+
+        assert!(decryptor.decrypt_chunk(&ciphertext).is_err());
+    }
+
+    #[test]
+    fn test_stream_wrong_ephemeral_key_fails() {
+        let sender = KeyPair::generate();
+        let recipient = KeyPair::generate();
+        let wrong_ephemeral = KeyPair::generate();
+
+        let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
+        let transfer_nonce = *encryptor.transfer_nonce();
+        let ciphertext = encryptor.encrypt_chunk(b"secret", true).unwrap();
+
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &sender.public_key,
+            &wrong_ephemeral.public_key,
+            &transfer_nonce,
+        );
 
         assert!(decryptor.decrypt_chunk(&ciphertext).is_err());
     }
@@ -606,12 +686,17 @@ mod tests {
         let plaintext = vec![0xABu8; CHUNK_PLAINTEXT_SIZE];
         let mut encryptor = StreamEncryptor::new(&sender.secret_key, &recipient.public_key);
         let transfer_nonce = *encryptor.transfer_nonce();
+        let sender_ephemeral_pk = encryptor.sender_ephemeral_public_key().clone();
 
         let ct = encryptor.encrypt_chunk(&plaintext, true).unwrap();
         assert_eq!(ct.len(), CHUNK_PLAINTEXT_SIZE + CHUNK_TAG_SIZE);
 
-        let mut decryptor =
-            StreamDecryptor::new(&recipient.secret_key, &sender.public_key, &transfer_nonce);
+        let mut decryptor = StreamDecryptor::new(
+            &recipient.secret_key,
+            &sender.public_key,
+            &sender_ephemeral_pk,
+            &transfer_nonce,
+        );
         let (dec, is_final) = decryptor.decrypt_chunk(&ct).unwrap();
         assert_eq!(dec, plaintext);
         assert!(is_final);
