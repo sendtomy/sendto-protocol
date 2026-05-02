@@ -93,6 +93,13 @@ pub struct RegisterDeviceRequest {
     pub push_platform: Option<PushPlatform>,
 }
 
+/// Request body for `POST /devices/session`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceSessionRequest {
+    pub device_id: Uuid,
+    pub public_key: String,
+}
+
 /// Push notification platform for mobile devices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
