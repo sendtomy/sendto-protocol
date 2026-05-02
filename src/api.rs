@@ -106,6 +106,22 @@ pub struct DeviceKeySessionRequest {
     pub public_key: String,
 }
 
+/// Response body for a device session restore challenge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceSessionChallengeResponse {
+    pub challenge_id: Uuid,
+    pub server_public_key: String,
+    pub nonce: String,
+    pub encrypted_challenge: String,
+}
+
+/// Request body for `POST /devices/session/complete`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompleteDeviceSessionRequest {
+    pub challenge_id: Uuid,
+    pub challenge: String,
+}
+
 /// Push notification platform for mobile devices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
