@@ -100,6 +100,12 @@ pub struct DeviceSessionRequest {
     pub public_key: String,
 }
 
+/// Request body for `POST /devices/session/by-key`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceKeySessionRequest {
+    pub public_key: String,
+}
+
 /// Push notification platform for mobile devices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
