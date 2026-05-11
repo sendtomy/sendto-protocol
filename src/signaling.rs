@@ -1,8 +1,7 @@
-//! WebSocket signaling types for WebRTC peer-to-peer file transfer.
+//! WebSocket signaling types for peer-to-peer connection coordination.
 //!
-//! The server acts as a signaling relay only — it forwards SDP offers/answers
-//! and ICE candidates between peers. Actual file data flows directly over
-//! WebRTC data channels.
+//! The server acts as a signaling relay — it forwards P2P requests and
+//! endpoint info between peers. Actual file data flows directly over TCP.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -25,6 +24,10 @@ pub enum ClientMessage {
         target_device: String,
         candidate: String,
     },
+
+    /// Request server-coordinated P2P endpoint info for a target device.
+    #[serde(rename = "request_p2p")]
+    RequestP2P { target_device: String },
 
     /// Heartbeat to keep the connection alive.
     Ping,
@@ -65,6 +68,19 @@ pub enum ServerMessage {
         message_id: Uuid,
         sender: String,
         size_bytes: i64,
+    },
+
+    /// Another device wants to establish a direct P2P connection.
+    #[serde(rename = "p2p_request")]
+    P2PRequest { from_device: String },
+
+    /// Server-coordinated P2P endpoint info for a target device.
+    #[serde(rename = "p2p_info")]
+    P2PInfo {
+        target_device: String,
+        public_ip: String,
+        public_port: u16,
+        p2p_token: String,
     },
 
     /// Heartbeat response.
@@ -204,6 +220,21 @@ mod tests {
     }
 
     #[test]
+    fn client_message_request_p2p_roundtrip() {
+        let msg = ClientMessage::RequestP2P {
+            target_device: "laptop".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ClientMessage::RequestP2P { target_device } => {
+                assert_eq!(target_device, "laptop");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn client_message_ping_roundtrip() {
         let msg = ClientMessage::Ping;
         let json = serde_json::to_string(&msg).unwrap();
@@ -312,6 +343,45 @@ mod tests {
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         match parsed {
             ServerMessage::PeerOffline { device_name } => assert_eq!(device_name, "tablet"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn server_message_p2p_request_roundtrip() {
+        let msg = ServerMessage::P2PRequest {
+            from_device: "phone".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ServerMessage::P2PRequest { from_device } => assert_eq!(from_device, "phone"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn server_message_p2p_info_roundtrip() {
+        let msg = ServerMessage::P2PInfo {
+            target_device: "laptop".into(),
+            public_ip: "203.0.113.5".into(),
+            public_port: 7655,
+            p2p_token: "abc123".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ServerMessage::P2PInfo {
+                target_device,
+                public_ip,
+                public_port,
+                p2p_token,
+            } => {
+                assert_eq!(target_device, "laptop");
+                assert_eq!(public_ip, "203.0.113.5");
+                assert_eq!(public_port, 7655);
+                assert_eq!(p2p_token, "abc123");
+            }
             _ => panic!("wrong variant"),
         }
     }
@@ -447,10 +517,40 @@ mod tests {
     }
 
     #[test]
+    fn client_message_json_tag_request_p2p() {
+        let msg = ClientMessage::RequestP2P {
+            target_device: "x".into(),
+        };
+        let v: Value = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["type"], "request_p2p");
+    }
+
+    #[test]
     fn client_message_json_tag_ping() {
         let msg = ClientMessage::Ping;
         let v: Value = serde_json::to_value(&msg).unwrap();
         assert_eq!(v["type"], "ping");
+    }
+
+    #[test]
+    fn server_message_json_tag_p2p_request() {
+        let msg = ServerMessage::P2PRequest {
+            from_device: "x".into(),
+        };
+        let v: Value = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["type"], "p2p_request");
+    }
+
+    #[test]
+    fn server_message_json_tag_p2p_info() {
+        let msg = ServerMessage::P2PInfo {
+            target_device: "x".into(),
+            public_ip: "1.2.3.4".into(),
+            public_port: 7655,
+            p2p_token: "tok".into(),
+        };
+        let v: Value = serde_json::to_value(&msg).unwrap();
+        assert_eq!(v["type"], "p2p_info");
     }
 
     #[test]
