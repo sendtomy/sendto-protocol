@@ -273,6 +273,11 @@ impl StreamEncryptor {
         &self.sender_ephemeral_public_key
     }
 
+    /// Seek to a specific chunk index (for resuming an interrupted transfer).
+    pub fn seek_to_chunk(&mut self, index: u64) {
+        self.chunk_index = index;
+    }
+
     /// Encrypt one chunk. Set `is_final` to true on the last chunk.
     ///
     /// Returns the ciphertext (plaintext.len() + 16 bytes).
@@ -323,6 +328,11 @@ impl StreamDecryptor {
             key,
             chunk_index: 0,
         }
+    }
+
+    /// Seek to a specific chunk index (for resuming an interrupted transfer).
+    pub fn seek_to_chunk(&mut self, index: u64) {
+        self.chunk_index = index;
     }
 
     /// Decrypt one chunk. Returns `(plaintext, is_final)`.
