@@ -37,6 +37,18 @@ pub struct GoogleAuthExchangeRequest {
 pub struct MeResponse {
     pub user_id: Uuid,
     pub email: String,
+    #[serde(default)]
+    pub plan: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionInfoResponse {
+    pub server_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    pub api_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_supported_client_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
